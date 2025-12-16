@@ -1,6 +1,6 @@
 {
   "name": "bcb-ptax",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Retrieve PTAX exchange rates from Banco Central do Brasil",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -20,14 +20,19 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:unit": "vitest run --exclude tests/integration.test.ts",
+    "test:integration": "vitest run tests/integration.test.ts",
     "test:coverage": "vitest run --coverage",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
     "check": "biome check --write . && pnpm test:run",
-    "prepublishOnly": "pnpm run check && pnpm run build"
+    "prepublishOnly": "pnpm run build && pnpm run test:unit",
+    "release": "tsx scripts/publish.ts"
   },
   "keywords": [
     "ptax",
@@ -44,6 +49,7 @@
     "@biomejs/biome": "^2.3.9",
     "@types/node": "^25.0.2",
     "tsup": "^8.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.0",
     "vitest": "^2.0.0"
   }
