@@ -1,6 +1,6 @@
 {
   "name": "bcb-ptax",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Retrieve PTAX exchange rates from Banco Central do Brasil",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
