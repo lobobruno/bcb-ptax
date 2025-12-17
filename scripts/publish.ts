@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     // Step 5: Git commit
     console.log('📦 Creating git commit...');
     exec('git add package.json');
-    exec(`git commit -m "chore: release v${newVersion}"`);
+    exec(`git commit -m ":bookmark: release v${newVersion}"`);
     console.log('✅ Commit created!\n');
 
     // Step 6: Create git tag
