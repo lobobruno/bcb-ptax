@@ -4,18 +4,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 function exec(command: string, options?: { stdio?: 'inherit' | 'pipe' }): string {
-  try {
-    const result = execSync(command, {
-      encoding: 'utf-8',
-      stdio: options?.stdio ?? 'pipe',
-    });
-    return result?.trim() ?? '';
-  } catch (error) {
-    if (error instanceof Error && 'stdout' in error) {
-      return (error as { stdout: string }).stdout?.trim() ?? '';
-    }
-    throw error;
-  }
+  const result = execSync(command, {
+    encoding: 'utf-8',
+    stdio: options?.stdio ?? 'pipe',
+  });
+  return result?.trim() ?? '';
 }
 
 function getPackageJson(): { version: string; name: string; [key: string]: unknown } {
