@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseCSV } from '../src/parser.js';
+import { parseCSV, parseHTML } from '../src/parser.js';
 
 describe('parseCSV', () => {
   it('should parse sample CSV file correctly', () => {
@@ -72,5 +72,77 @@ invalid line
     expect(jpy).toBeDefined();
     expect(jpy?.buyRate).toBeCloseTo(0.03521, 5);
     expect(jpy?.buyParity).toBeCloseTo(153.18, 2);
+  });
+});
+
+describe('parseHTML', () => {
+  it('should parse sample HTML file correctly', () => {
+    const html = readFileSync(join(__dirname, 'fixtures/sample.html'), 'utf-8');
+    const rates = parseHTML(html);
+
+    expect(rates).toHaveLength(3);
+
+    const usd = rates.find((r) => r.currency === 'USD');
+    expect(usd).toBeDefined();
+    expect(usd?.currencyCode).toBe(220);
+    expect(usd?.currencyType).toBe('A');
+    expect(usd?.buyRate).toBeCloseTo(5.3923, 4);
+    expect(usd?.sellRate).toBeCloseTo(5.3929, 4);
+    expect(usd?.buyParity).toBe(1);
+    expect(usd?.sellParity).toBe(1);
+  });
+
+  it('should extract date from header', () => {
+    const html = readFileSync(join(__dirname, 'fixtures/sample.html'), 'utf-8');
+    const rates = parseHTML(html);
+
+    const usd = rates.find((r) => r.currency === 'USD');
+    expect(usd?.date.getFullYear()).toBe(2025);
+    expect(usd?.date.getMonth()).toBe(11); // December
+    expect(usd?.date.getDate()).toBe(15);
+  });
+
+  it('should parse EUR with type B', () => {
+    const html = readFileSync(join(__dirname, 'fixtures/sample.html'), 'utf-8');
+    const rates = parseHTML(html);
+
+    const eur = rates.find((r) => r.currency === 'EUR');
+    expect(eur).toBeDefined();
+    expect(eur?.currencyType).toBe('B');
+    expect(eur?.buyRate).toBeCloseTo(6.3424, 4);
+    expect(eur?.sellRate).toBeCloseTo(6.3442, 4);
+  });
+
+  it('should parse JPY with small rate correctly', () => {
+    const html = readFileSync(join(__dirname, 'fixtures/sample.html'), 'utf-8');
+    const rates = parseHTML(html);
+
+    const jpy = rates.find((r) => r.currency === 'JPY');
+    expect(jpy).toBeDefined();
+    expect(jpy?.buyRate).toBeCloseTo(0.03521, 5);
+    expect(jpy?.buyParity).toBeCloseTo(153.18, 2);
+  });
+
+  it('should handle empty input', () => {
+    const rates = parseHTML('');
+    expect(rates).toHaveLength(0);
+  });
+
+  it('should handle HTML without date header', () => {
+    const html =
+      '<html><body><table><tr><td>220</td><td>A</td><td>USD</td><td>5,3923</td><td>5,3929</td><td>1,0000</td><td>1,0000</td></tr></table></body></html>';
+    const rates = parseHTML(html);
+    expect(rates).toHaveLength(0);
+  });
+
+  it('should skip header row with non-numeric currency code', () => {
+    const html = `<strong>15/12/2025 às 13:00</strong>
+      <table>
+        <tr><td>Cod Moeda</td><td>Tipo</td><td>Moeda</td><td>Taxa Compra</td><td>Taxa Venda</td><td>Paridade Compra</td><td>Paridade Venda</td></tr>
+        <tr><td>220</td><td>A</td><td>USD</td><td>5,3923</td><td>5,3929</td><td>1,0000</td><td>1,0000</td></tr>
+      </table>`;
+    const rates = parseHTML(html);
+    expect(rates).toHaveLength(1);
+    expect(rates[0].currency).toBe('USD');
   });
 });

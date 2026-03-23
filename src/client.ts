@@ -1,9 +1,11 @@
 import { DataUnavailableError } from './errors.js';
-import { parseCSV } from './parser.js';
+import { parseCSV, parseHTML } from './parser.js';
 import type { CacheEntry, PTAXOptions, PTAXRate } from './types.js';
 import { formatDateForUrl, formatDateKey, subDays } from './utils/date.js';
 
 const BCB_BASE_URL = 'https://www4.bcb.gov.br/Download/fechamento';
+const BCB_HTML_URL =
+  'https://ptax.bcb.gov.br/ptax_internet/consultarTodasAsMoedas.do?method=consultaTodasMoedas';
 const DEFAULT_MAX_RETRIES = 5;
 const DEFAULT_TIMEOUT = 10000;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -44,6 +46,36 @@ function setCache(dateKey: string, data: PTAXRate[]): void {
  */
 export function clearCache(): void {
   cache.clear();
+}
+
+/**
+ * Fetches PTAX rates from the HTML fallback page
+ */
+async function fetchFromHtmlFallback(timeout: number): Promise<PTAXRate[]> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  const response = await fetch(BCB_HTML_URL, { signal: controller.signal });
+  clearTimeout(timeoutId);
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const buffer = await response.arrayBuffer();
+  const html = new TextDecoder('iso-8859-1').decode(buffer);
+  return parseHTML(html);
+}
+
+/**
+ * Checks if two dates are the same calendar day
+ */
+function isSameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
 }
 
 /**
@@ -98,6 +130,21 @@ export async function fetchRates(
 
     // Go back one day
     currentDate = subDays(currentDate, 1);
+  }
+
+  // Try HTML fallback for today's date when CSV is unavailable
+  if (options.useFallback !== false && isSameDay(startDate, new Date())) {
+    try {
+      const fallbackRates = await fetchFromHtmlFallback(timeout);
+      if (fallbackRates.length > 0) {
+        const today = new Date();
+        const dateKey = formatDateKey(today);
+        setCache(dateKey, fallbackRates);
+        return { rates: fallbackRates, actualDate: today };
+      }
+    } catch {
+      // Fallback also failed, fall through to throw
+    }
   }
 
   throw new DataUnavailableError(maxRetries);

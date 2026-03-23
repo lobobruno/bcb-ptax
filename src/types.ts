@@ -28,6 +28,8 @@ export interface PTAXOptions {
   maxRetries?: number;
   /** Request timeout in milliseconds (default: 10000) */
   timeout?: number;
+  /** Whether to use the HTML fallback when CSV is unavailable (default: true) */
+  useFallback?: boolean;
 }
 
 /**

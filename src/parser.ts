@@ -1,6 +1,10 @@
 import type { PTAXRate } from './types.js';
 import { parseDate } from './utils/date.js';
 
+const HTML_DATE_REGEX = /(\d{2}\/\d{2}\/\d{4})\s+[àa]s/;
+const HTML_ROW_REGEX =
+  /<tr[^>]*>\s*<td[^>]*>(.*?)<\/td>\s*<td[^>]*>(.*?)<\/td>\s*<td[^>]*>(.*?)<\/td>\s*<td[^>]*>(.*?)<\/td>\s*<td[^>]*>(.*?)<\/td>\s*<td[^>]*>(.*?)<\/td>\s*<td[^>]*>(.*?)<\/td>\s*<\/tr>/gi;
+
 /**
  * Parses a Brazilian number format (comma as decimal separator) to a JavaScript number
  */
@@ -44,6 +48,55 @@ function parseLine(line: string): PTAXRate | null {
     buyParity: parseNumber(buyParity),
     sellParity: parseNumber(sellParity),
   };
+}
+
+/**
+ * Parses the HTML page from BCB PTAX into an array of PTAXRate objects
+ */
+export function parseHTML(html: string): PTAXRate[] {
+  const dateMatch = html.match(HTML_DATE_REGEX);
+  if (!dateMatch) {
+    return [];
+  }
+
+  const date = parseDate(dateMatch[1]);
+  const rates: PTAXRate[] = [];
+
+  for (
+    let match = HTML_ROW_REGEX.exec(html);
+    match !== null;
+    match = HTML_ROW_REGEX.exec(html)
+  ) {
+    const [
+      ,
+      codeStr,
+      type,
+      currency,
+      buyRate,
+      sellRate,
+      buyParity,
+      sellParity,
+    ] = match;
+
+    const currencyCode = parseInt(codeStr.trim(), 10);
+    if (Number.isNaN(currencyCode)) continue;
+
+    const trimmedType = type.trim();
+    if (trimmedType !== 'A' && trimmedType !== 'B') continue;
+
+    rates.push({
+      date,
+      currencyCode,
+      currencyType: trimmedType,
+      currency: currency.trim(),
+      buyRate: parseNumber(buyRate.trim()),
+      sellRate: parseNumber(sellRate.trim()),
+      buyParity: parseNumber(buyParity.trim()),
+      sellParity: parseNumber(sellParity.trim()),
+    });
+  }
+
+  return rates;
 }
 
 /**
