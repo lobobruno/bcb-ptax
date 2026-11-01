@@ -5,6 +5,7 @@ export {
   clearCache,
   getLatestRates,
   getRatesByDate,
+  getRatesByPeriod,
 } from './client.js';
 // Converter functions
 export {
@@ -21,6 +22,7 @@ export {
 export type {
   ConversionResult,
   ConvertOptions,
+  PeriodOptions,
   PTAXOptions,
   PTAXRate,
 } from './types.js';

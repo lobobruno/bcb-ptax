@@ -30,6 +30,28 @@ export function subDays(date: Date, days: number): Date {
 }
 
 /**
+ * Adds days to a date and returns a new Date
+ */
+export function addDays(date: Date, days: number): Date {
+  return subDays(date, -days);
+}
+
+/**
+ * Returns a new Date set to midnight (local time) of the same day
+ */
+export function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+/**
+ * Checks if a date falls on Saturday or Sunday
+ */
+export function isWeekend(date: Date): boolean {
+  const day = date.getDay();
+  return day === 0 || day === 6;
+}
+
+/**
  * Formats a Date to YYYY-MM-DD string (for cache keys)
  */
 export function formatDateKey(date: Date): string {

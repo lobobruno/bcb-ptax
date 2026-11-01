@@ -80,6 +80,25 @@ import { getRatesByDate } from 'bcb-ptax';
 const rates = await getRatesByDate(new Date('2025-12-15'));
 ```
 
+### Get a Currency's Rates for a Period
+
+```typescript
+import { getRatesByPeriod } from 'bcb-ptax';
+
+// One entry per business day, sorted by date (weekends and holidays have no entry)
+const rates = await getRatesByPeriod(
+  'USD',
+  new Date(2025, 11, 1),
+  new Date(2025, 11, 31)
+);
+
+for (const rate of rates) {
+  console.log(`${rate.date.toLocaleDateString('pt-BR')}: ${rate.sellRate}`);
+}
+```
+
+Each business day is fetched separately (5 in parallel by default, configurable with `concurrency`), so long periods take more requests.
+
 ### Convert Between Currencies
 
 ```typescript
@@ -139,6 +158,7 @@ clearCache();
 |----------|-------------|
 | `getLatestRates(options?)` | Fetch all rates from the most recent available date |
 | `getRatesByDate(date, options?)` | Fetch all rates for a specific date |
+| `getRatesByPeriod(currency, from, to, options?)` | Get a currency's rates for each business day in a period |
 | `getRate(currency, options?)` | Get a single currency rate |
 | `convert(amount, from, to, options?)` | Convert between currencies |
 | `getSupportedCurrencies(options?)` | Get list of available currencies |

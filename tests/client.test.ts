@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearCache, fetchRates } from '../src/client.js';
-import { DataUnavailableError } from '../src/errors.js';
+import {
+  clearCache,
+  fetchRates,
+  getRatesByDate,
+  getRatesByPeriod,
+} from '../src/client.js';
+import {
+  CurrencyNotFoundError,
+  DataUnavailableError,
+  PTAXError,
+} from '../src/errors.js';
 
 describe('fetchRates', () => {
   beforeEach(() => {
@@ -245,5 +254,128 @@ describe('clearCache', () => {
     // Second call - should fetch again
     await fetchRates(new Date(2025, 11, 15));
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('getRatesByPeriod', () => {
+  // 2025-12-12 is a Friday, 2025-12-15 a Monday
+  const files: Record<string, string> = {
+    '20251212': `12/12/2025;220;A;USD;5,40000000;5,40060000;1,00000000;1,00000000
+12/12/2025;978;B;EUR;6,33000000;6,33180000;1,17200000;1,17220000`,
+    '20251215': `15/12/2025;220;A;USD;5,39230000;5,39290000;1,00000000;1,00000000
+15/12/2025;978;B;EUR;6,34240000;6,34420000;1,17620000;1,17640000`,
+    '20251217': `17/12/2025;220;A;USD;5,41000000;5,41060000;1,00000000;1,00000000
+17/12/2025;978;B;EUR;6,35000000;6,35180000;1,17400000;1,17420000`,
+  };
+
+  function mockBcb() {
+    return vi.spyOn(global, 'fetch').mockImplementation((input) => {
+      const day = String(input).match(/(\d{8})\.csv$/)?.[1] ?? '';
+      const csv = files[day];
+      return Promise.resolve(
+        (csv
+          ? { ok: true, text: () => Promise.resolve(csv) }
+          : { ok: false, status: 404 }) as Response
+      );
+    });
+  }
+
+  beforeEach(() => {
+    clearCache();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should return one rate per business day, sorted, skipping holidays', async () => {
+    mockBcb();
+
+    const rates = await getRatesByPeriod(
+      'usd',
+      new Date(2025, 11, 12),
+      new Date(2025, 11, 17)
+    );
+
+    expect(rates.map((r) => r.date.getDate())).toEqual([12, 15, 17]);
+    expect(rates.every((r) => r.currency === 'USD')).toBe(true);
+    expect(rates[1].sellRate).toBe(5.3929);
+  });
+
+  it('should not request weekend days', async () => {
+    const fetchMock = mockBcb();
+
+    await getRatesByPeriod(
+      'EUR',
+      new Date(2025, 11, 12),
+      new Date(2025, 11, 15)
+    );
+
+    const requested = fetchMock.mock.calls.map(
+      (c) => String(c[0]).match(/(\d{8})\.csv$/)?.[1]
+    );
+    expect(requested.sort()).toEqual(['20251212', '20251215']);
+  });
+
+  it('should include both ends of the period, ignoring time of day', async () => {
+    mockBcb();
+
+    const rates = await getRatesByPeriod(
+      'EUR',
+      new Date(2025, 11, 15, 18, 30),
+      new Date(2025, 11, 15, 9, 0)
+    );
+
+    expect(rates).toHaveLength(1);
+    expect(rates[0].buyRate).toBe(6.3424);
+  });
+
+  it('should return an empty array when the period has no data', async () => {
+    const fetchMock = mockBcb();
+
+    const rates = await getRatesByPeriod(
+      'USD',
+      new Date(2025, 11, 13),
+      new Date(2025, 11, 14)
+    );
+
+    expect(rates).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('should throw CurrencyNotFoundError for an unknown currency', async () => {
+    mockBcb();
+
+    await expect(
+      getRatesByPeriod('XYZ', new Date(2025, 11, 12), new Date(2025, 11, 15))
+    ).rejects.toThrow(CurrencyNotFoundError);
+  });
+
+  it('should throw PTAXError when from is after to', async () => {
+    await expect(
+      getRatesByPeriod('USD', new Date(2025, 11, 15), new Date(2025, 11, 12))
+    ).rejects.toThrow(PTAXError);
+  });
+
+  it('should propagate network errors instead of returning partial data', async () => {
+    vi.spyOn(global, 'fetch').mockRejectedValue(new Error('Network error'));
+
+    await expect(
+      getRatesByPeriod('USD', new Date(2025, 11, 12), new Date(2025, 11, 15))
+    ).rejects.toThrow('Network error');
+  });
+
+  it('should reuse cached days', async () => {
+    const fetchMock = mockBcb();
+
+    await getRatesByDate(new Date(2025, 11, 15));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await getRatesByPeriod(
+      'USD',
+      new Date(2025, 11, 15),
+      new Date(2025, 11, 15)
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

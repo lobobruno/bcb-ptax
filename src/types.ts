@@ -33,6 +33,16 @@ export interface PTAXOptions {
 }
 
 /**
+ * Options for period requests
+ */
+export interface PeriodOptions {
+  /** Request timeout in milliseconds, per day fetched (default: 10000) */
+  timeout?: number;
+  /** Maximum number of days fetched in parallel (default: 5) */
+  concurrency?: number;
+}
+
+/**
  * Options for currency conversion
  */
 export interface ConvertOptions extends PTAXOptions {

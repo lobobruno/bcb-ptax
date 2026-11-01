@@ -1,13 +1,30 @@
-import { DataUnavailableError } from './errors.js';
+import {
+  CurrencyNotFoundError,
+  DataUnavailableError,
+  PTAXError,
+} from './errors.js';
 import { parseCSV, parseHTML } from './parser.js';
-import type { CacheEntry, PTAXOptions, PTAXRate } from './types.js';
-import { formatDateForUrl, formatDateKey, subDays } from './utils/date.js';
+import type {
+  CacheEntry,
+  PeriodOptions,
+  PTAXOptions,
+  PTAXRate,
+} from './types.js';
+import {
+  addDays,
+  formatDateForUrl,
+  formatDateKey,
+  isWeekend,
+  startOfDay,
+  subDays,
+} from './utils/date.js';
 
 const BCB_BASE_URL = 'https://www4.bcb.gov.br/Download/fechamento';
 const BCB_HTML_URL =
   'https://ptax.bcb.gov.br/ptax_internet/consultarTodasAsMoedas.do?method=consultaTodasMoedas';
 const DEFAULT_MAX_RETRIES = 5;
 const DEFAULT_TIMEOUT = 10000;
+const DEFAULT_CONCURRENCY = 5;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 // In-memory cache
@@ -79,6 +96,47 @@ function isSameDay(a: Date, b: Date): boolean {
 }
 
 /**
+ * Fetches the CSV for exactly one day (no retry). Returns null when BCB has
+ * no data for that day (weekend, holiday or not yet published) and throws on
+ * network errors or timeouts.
+ */
+async function fetchDay(
+  date: Date,
+  timeout: number
+): Promise<PTAXRate[] | null> {
+  const dateKey = formatDateKey(date);
+
+  // Check cache first
+  const cachedData = getCached(dateKey);
+  if (cachedData) {
+    return cachedData;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(buildUrl(date), {
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const rates = parseCSV(await response.text());
+    if (rates.length === 0) {
+      return null;
+    }
+
+    setCache(dateKey, rates);
+    return rates;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Fetches PTAX data from BCB with retry logic for weekends/holidays
  */
 export async function fetchRates(
@@ -91,41 +149,13 @@ export async function fetchRates(
   let currentDate = new Date(startDate);
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const dateKey = formatDateKey(currentDate);
-
-    // Check cache first
-    const cachedData = getCached(dateKey);
-    if (cachedData) {
-      return { rates: cachedData, actualDate: new Date(currentDate) };
-    }
-
-    const url = buildUrl(currentDate);
-
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-      const response = await fetch(url, {
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const text = await response.text();
-        const rates = parseCSV(text);
-
-        if (rates.length > 0) {
-          setCache(dateKey, rates);
-          return { rates, actualDate: new Date(currentDate) };
-        }
+      const rates = await fetchDay(currentDate, timeout);
+      if (rates) {
+        return { rates, actualDate: new Date(currentDate) };
       }
-    } catch (error) {
+    } catch {
       // Network error or timeout - continue to next day
-      if (error instanceof Error && error.name === 'AbortError') {
-        // Timeout - continue to next day
-      }
-      // Other errors - continue to next day
     }
 
     // Go back one day
@@ -168,5 +198,65 @@ export async function getRatesByDate(
   options?: PTAXOptions
 ): Promise<PTAXRate[]> {
   const { rates } = await fetchRates(date, options);
+  return rates;
+}
+
+/**
+ * Fetches all rates of one currency between two dates (inclusive), one entry
+ * per business day, sorted by date. Weekends are skipped without a request;
+ * holidays are skipped when BCB has no file for them.
+ *
+ * @param currency - ISO currency code (e.g., 'USD')
+ * @param from - First day of the period
+ * @param to - Last day of the period
+ * @param options - Request options
+ * @returns Rates for the period, or an empty array if BCB has no data in it
+ */
+export async function getRatesByPeriod(
+  currency: string,
+  from: Date,
+  to: Date,
+  options: PeriodOptions = {}
+): Promise<PTAXRate[]> {
+  const timeout = options.timeout ?? DEFAULT_TIMEOUT;
+  const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
+  const currencyUpper = currency.toUpperCase();
+
+  const start = startOfDay(from);
+  const end = startOfDay(to);
+  if (start > end) {
+    throw new PTAXError('`from` must be on or before `to`');
+  }
+
+  const days: Date[] = [];
+  for (let day = start; day <= end; day = addDays(day, 1)) {
+    if (!isWeekend(day)) {
+      days.push(day);
+    }
+  }
+
+  const results: (PTAXRate[] | null)[] = new Array(days.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < days.length) {
+      const index = next++;
+      results[index] = await fetchDay(days[index], timeout);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, days.length) }, worker)
+  );
+
+  const available = results.filter((r): r is PTAXRate[] => r !== null);
+  const rates = available
+    .map((dayRates) =>
+      dayRates.find((r) => r.currency.toUpperCase() === currencyUpper)
+    )
+    .filter((r): r is PTAXRate => r !== undefined);
+
+  if (available.length > 0 && rates.length === 0) {
+    throw new CurrencyNotFoundError(currency);
+  }
+
   return rates;
 }
