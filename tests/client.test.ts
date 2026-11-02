@@ -261,11 +261,14 @@ describe('getRatesByPeriod', () => {
   // 2025-12-12 is a Friday, 2025-12-15 a Monday
   const files: Record<string, string> = {
     '20251212': `12/12/2025;220;A;USD;5,40000000;5,40060000;1,00000000;1,00000000
-12/12/2025;978;B;EUR;6,33000000;6,33180000;1,17200000;1,17220000`,
+12/12/2025;978;B;EUR;6,33000000;6,33180000;1,17200000;1,17220000
+12/12/2025;706;A;ARS;0,00374000;0,00375000;1443,00000000;1444,00000000`,
     '20251215': `15/12/2025;220;A;USD;5,39230000;5,39290000;1,00000000;1,00000000
-15/12/2025;978;B;EUR;6,34240000;6,34420000;1,17620000;1,17640000`,
+15/12/2025;978;B;EUR;6,34240000;6,34420000;1,17620000;1,17640000
+15/12/2025;706;A;ARS;0,00376000;0,00377000;1434,00000000;1435,00000000`,
     '20251217': `17/12/2025;220;A;USD;5,41000000;5,41060000;1,00000000;1,00000000
-17/12/2025;978;B;EUR;6,35000000;6,35180000;1,17400000;1,17420000`,
+17/12/2025;978;B;EUR;6,35000000;6,35180000;1,17400000;1,17420000
+17/12/2025;706;A;ARS;0,00378000;0,00379000;1425,00000000;1426,00000000`,
   };
 
   function mockBcb() {
@@ -292,21 +295,21 @@ describe('getRatesByPeriod', () => {
     mockBcb();
 
     const rates = await getRatesByPeriod(
-      'usd',
+      'ars',
       new Date(2025, 11, 12),
       new Date(2025, 11, 17)
     );
 
     expect(rates.map((r) => r.date.getDate())).toEqual([12, 15, 17]);
-    expect(rates.every((r) => r.currency === 'USD')).toBe(true);
-    expect(rates[1].sellRate).toBe(5.3929);
+    expect(rates.every((r) => r.currency === 'ARS')).toBe(true);
+    expect(rates[1].sellRate).toBe(0.00377);
   });
 
   it('should not request weekend days', async () => {
     const fetchMock = mockBcb();
 
     await getRatesByPeriod(
-      'EUR',
+      'ARS',
       new Date(2025, 11, 12),
       new Date(2025, 11, 15)
     );
@@ -321,20 +324,20 @@ describe('getRatesByPeriod', () => {
     mockBcb();
 
     const rates = await getRatesByPeriod(
-      'EUR',
+      'ARS',
       new Date(2025, 11, 15, 18, 30),
       new Date(2025, 11, 15, 9, 0)
     );
 
     expect(rates).toHaveLength(1);
-    expect(rates[0].buyRate).toBe(6.3424);
+    expect(rates[0].buyRate).toBe(0.00376);
   });
 
   it('should return an empty array when the period has no data', async () => {
     const fetchMock = mockBcb();
 
     const rates = await getRatesByPeriod(
-      'USD',
+      'ARS',
       new Date(2025, 11, 13),
       new Date(2025, 11, 14)
     );
@@ -353,7 +356,7 @@ describe('getRatesByPeriod', () => {
 
   it('should throw PTAXError when from is after to', async () => {
     await expect(
-      getRatesByPeriod('USD', new Date(2025, 11, 15), new Date(2025, 11, 12))
+      getRatesByPeriod('ARS', new Date(2025, 11, 15), new Date(2025, 11, 12))
     ).rejects.toThrow(PTAXError);
   });
 
@@ -361,7 +364,7 @@ describe('getRatesByPeriod', () => {
     vi.spyOn(global, 'fetch').mockRejectedValue(new Error('Network error'));
 
     await expect(
-      getRatesByPeriod('USD', new Date(2025, 11, 12), new Date(2025, 11, 15))
+      getRatesByPeriod('ARS', new Date(2025, 11, 12), new Date(2025, 11, 15))
     ).rejects.toThrow('Network error');
   });
 
@@ -372,10 +375,145 @@ describe('getRatesByPeriod', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await getRatesByPeriod(
-      'USD',
+      'ARS',
       new Date(2025, 11, 15),
       new Date(2025, 11, 15)
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getRatesByPeriod via Olinda', () => {
+  const olindaBody = {
+    value: [
+      {
+        paridadeCompra: 1,
+        paridadeVenda: 1,
+        cotacaoCompra: 5.4,
+        cotacaoVenda: 5.4006,
+        dataHoraCotacao: '2025-12-12 13:06:30.416',
+        tipoBoletim: 'Fechamento',
+      },
+      {
+        paridadeCompra: 1,
+        paridadeVenda: 1,
+        cotacaoCompra: 5.3923,
+        cotacaoVenda: 5.3929,
+        dataHoraCotacao: '2025-12-15 13:06:30.416',
+        tipoBoletim: 'Fechamento',
+      },
+    ],
+  };
+
+  const dailyCsv = `15/12/2025;220;A;USD;5,39230000;5,39290000;1,00000000;1,00000000`;
+
+  const isOlinda = (input: unknown) =>
+    String(input).includes('olinda.bcb.gov.br');
+
+  beforeEach(() => {
+    clearCache();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should fetch an Olinda currency in a single request', async () => {
+    const fetchMock = vi.spyOn(global, 'fetch').mockImplementation((input) =>
+      Promise.resolve({
+        ok: isOlinda(input),
+        status: isOlinda(input) ? 200 : 404,
+        json: () => Promise.resolve(olindaBody),
+      } as Response)
+    );
+
+    const rates = await getRatesByPeriod(
+      'usd',
+      new Date(2025, 11, 12),
+      new Date(2025, 11, 15)
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(isOlinda(fetchMock.mock.calls[0][0])).toBe(true);
+    expect(rates.map((r) => r.date.getDate())).toEqual([12, 15]);
+    expect(rates[1]).toMatchObject({
+      currency: 'USD',
+      currencyCode: 220,
+      currencyType: 'A',
+      sellRate: 5.3929,
+    });
+  });
+
+  it('should return an empty array when Olinda has no data, without falling back', async () => {
+    const fetchMock = vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ value: [] }),
+    } as Response);
+
+    const rates = await getRatesByPeriod(
+      'EUR',
+      new Date(2025, 11, 13),
+      new Date(2025, 11, 14)
+    );
+
+    expect(rates).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('should fall back to daily files when Olinda fails', async () => {
+    const fetchMock = vi.spyOn(global, 'fetch').mockImplementation((input) => {
+      if (isOlinda(input)) {
+        return Promise.reject(new Error('Network error'));
+      }
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(dailyCsv),
+      } as Response);
+    });
+
+    const rates = await getRatesByPeriod(
+      'USD',
+      new Date(2025, 11, 15),
+      new Date(2025, 11, 15)
+    );
+
+    expect(rates).toHaveLength(1);
+    expect(rates[0].sellRate).toBe(5.3929);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('should fall back to daily files when Olinda returns an HTTP error', async () => {
+    vi.spyOn(global, 'fetch').mockImplementation((input) =>
+      Promise.resolve(
+        (isOlinda(input)
+          ? { ok: false, status: 503 }
+          : { ok: true, text: () => Promise.resolve(dailyCsv) }) as Response
+      )
+    );
+
+    const rates = await getRatesByPeriod(
+      'USD',
+      new Date(2025, 11, 15),
+      new Date(2025, 11, 15)
+    );
+
+    expect(rates).toHaveLength(1);
+    expect(rates[0].currency).toBe('USD');
+  });
+
+  it('should not use Olinda for currencies it does not serve', async () => {
+    const fetchMock = vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 404,
+    } as Response);
+
+    await getRatesByPeriod(
+      'ARS',
+      new Date(2025, 11, 15),
+      new Date(2025, 11, 15)
+    );
+
+    expect(fetchMock.mock.calls.some((c) => isOlinda(c[0]))).toBe(false);
   });
 });

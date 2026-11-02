@@ -3,6 +3,7 @@ import {
   DataUnavailableError,
   PTAXError,
 } from './errors.js';
+import { fetchPeriodFromOlinda, OLINDA_CURRENCIES } from './olinda.js';
 import { parseCSV, parseHTML } from './parser.js';
 import type {
   CacheEntry,
@@ -203,8 +204,11 @@ export async function getRatesByDate(
 
 /**
  * Fetches all rates of one currency between two dates (inclusive), one entry
- * per business day, sorted by date. Weekends are skipped without a request;
- * holidays are skipped when BCB has no file for them.
+ * per business day, sorted by date. Weekends and holidays have no entry.
+ *
+ * Currencies covered by BCB's Olinda API (USD, EUR, GBP, JPY, CHF, CAD, AUD,
+ * DKK, NOK, SEK) are fetched in a single request. Other currencies fall back
+ * to one daily CSV per business day, fetched with bounded concurrency.
  *
  * @param currency - ISO currency code (e.g., 'USD')
  * @param from - First day of the period
@@ -219,7 +223,6 @@ export async function getRatesByPeriod(
   options: PeriodOptions = {}
 ): Promise<PTAXRate[]> {
   const timeout = options.timeout ?? DEFAULT_TIMEOUT;
-  const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
   const currencyUpper = currency.toUpperCase();
 
   const start = startOfDay(from);
@@ -227,6 +230,31 @@ export async function getRatesByPeriod(
   if (start > end) {
     throw new PTAXError('`from` must be on or before `to`');
   }
+
+  if (currencyUpper in OLINDA_CURRENCIES) {
+    try {
+      return await fetchPeriodFromOlinda(currencyUpper, start, end, timeout);
+    } catch {
+      // Olinda unavailable - fall back to the daily files
+    }
+  }
+
+  return fetchPeriodFromDailyFiles(currencyUpper, start, end, options);
+}
+
+/**
+ * Fetches a currency's rates over a period by downloading the daily closing
+ * CSV of each business day. Weekends are skipped without a request; holidays
+ * are skipped when BCB has no file for them.
+ */
+async function fetchPeriodFromDailyFiles(
+  currency: string,
+  start: Date,
+  end: Date,
+  options: PeriodOptions
+): Promise<PTAXRate[]> {
+  const timeout = options.timeout ?? DEFAULT_TIMEOUT;
+  const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
 
   const days: Date[] = [];
   for (let day = start; day <= end; day = addDays(day, 1)) {
@@ -250,7 +278,7 @@ export async function getRatesByPeriod(
   const available = results.filter((r): r is PTAXRate[] => r !== null);
   const rates = available
     .map((dayRates) =>
-      dayRates.find((r) => r.currency.toUpperCase() === currencyUpper)
+      dayRates.find((r) => r.currency.toUpperCase() === currency)
     )
     .filter((r): r is PTAXRate => r !== undefined);
 
